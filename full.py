@@ -1,4 +1,5 @@
 # for data load
+from gc import callbacks
 import os
 
 # for reading and processing images
@@ -25,6 +26,7 @@ from sklearn.model_selection import train_test_split
 from stardist.models import StarDist2D 
 from stardist.plot import render_label
 from csbdeep.utils import normalize
+from skimage.segmentation import find_boundaries
 
 
 def LoadData (path1, path2):
@@ -88,7 +90,7 @@ def PreprocessData(bright, fluor, target_shape_img, target_shape_mask, path1, pa
     # Define X and Y as number of images along with shape of one image
     X = np.zeros((m, i_h, i_w, i_c), dtype=np.float32)
     y = np.zeros((m, m_h, m_w, m_c), dtype=np.int32)
-    
+    model = StarDist2D.from_pretrained('2D_versatile_fluo')
     # Resize images and masks
     for file in bright:
         # convert image into an array of desired shape (3 channels)
@@ -115,8 +117,9 @@ def PreprocessData(bright, fluor, target_shape_img, target_shape_mask, path1, pa
         image_fluor  = imread(single_mask_ind)
         
         ###new
-        model = StarDist2D.from_pretrained('2D_versatile_fluo')
         labels, _ = model.predict_instances(normalize(image_fluor))
+        img_cont = find_boundaries(labels)
+        labels = np.where(img_cont != 0, 0, labels)
         labels = np.where(labels != 0, 1, labels)
         labels = resize(labels, (i_h, i_w),
                        anti_aliasing=True)
@@ -125,8 +128,6 @@ def PreprocessData(bright, fluor, target_shape_img, target_shape_mask, path1, pa
         labels = np.uint8(labels)
         #image_bright_field = single_img/256.
         y[index] = labels
-        
-        
         # image_fluor = resize(image_fluor, (i_h, i_w),
         #                anti_aliasing=True)
         # #image_fluor = image_fluor.resize((i_h, i_w))
@@ -288,13 +289,25 @@ print("Y shape:", y.shape)
 # Here, I have used 20% data as test/valid set
 X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2, random_state = 123)
 
-
 # Call the helper function for defining the layers for the model, given the input image size
 unet = UNetCompiled(input_size=(512,512,1), n_filters=32, n_classes=2)
 
 unet.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
               metrics=['accuracy'])
-results = unet.fit(X_train, y_train, batch_size=4, epochs=4, validation_data=(X_valid, y_valid))
+
+checkpoint_path = "training_2/cp-{epoch:04d}.ckpt"
+checkpoint_dir = os.path.dirname(checkpoint_path)
+
+batch_size = 8
+# Create a callback that saves the model's weights every 5 epochs
+cp_callback = tf.keras.callbacks.ModelCheckpoint(
+    filepath=checkpoint_path, 
+    verbose=1, 
+    save_weights_only=True,
+    save_freq = 5 * batch_size)
+
+results = unet.fit(X_train, y_train, batch_size=8, epochs=20, validation_data=(X_valid, y_valid), callbacks = [cp_callback])
+
 unet.evaluate(X_valid, y_valid)
 
 # Results of Validation Dataset
@@ -312,10 +325,10 @@ def VisualizeResults(index):
     arr[2].imshow(pred_mask[:,:,0])
     arr[2].set_title('Predicted Masked Image ')
     plt.savefig('plot{}.png'.format(index))
-count = 100
+
 # Add any index to contrast the predicted mask with actual mask
 for i in range (len(X_valid)):
-    if i >100:
+    if i >50:
         break
     VisualizeResults(i) 
 
