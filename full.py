@@ -22,6 +22,9 @@ from tensorflow.keras.layers import Conv2DTranspose
 from tensorflow.keras.layers import concatenate
 from tensorflow.keras.losses import binary_crossentropy
 from sklearn.model_selection import train_test_split
+from stardist.models import StarDist2D 
+from stardist.plot import render_label
+from csbdeep.utils import normalize
 
 
 def LoadData (path1, path2):
@@ -106,21 +109,33 @@ def PreprocessData(bright, fluor, target_shape_img, target_shape_mask, path1, pa
         X[index] = image_bright_field
         #print (image_bright_field.shape)
         
-        
         # convert mask into an array of desired shape (1 channel)
-        
         single_mask_ind = fluor[index]
         #image_fluor  = Image.open(file) # imread(single_mask_ind)
         image_fluor  = imread(single_mask_ind)
-        image_fluor = resize(image_fluor, (i_h, i_w),
+        
+        ###new
+        model = StarDist2D.from_pretrained('2D_versatile_fluo')
+        labels, _ = model.predict_instances(normalize(image_fluor))
+        labels = np.where(labels != 0, 1, labels)
+        labels = resize(labels, (i_h, i_w),
                        anti_aliasing=True)
         #image_fluor = image_fluor.resize((i_h, i_w))
-        image_fluor = np.reshape(image_fluor,(i_h, i_w, i_c)) 
-        image_fluor = np.float64(image_fluor)
-        image_fluor = image_fluor * 15.0 / image_fluor.max()
-        image_fluor = np.uint8(image_fluor)
+        labels = np.reshape(labels,(i_h, i_w, i_c)) 
+        labels = np.uint8(labels)
         #image_bright_field = single_img/256.
-        y[index] = image_fluor
+        y[index] = labels
+        
+        
+        # image_fluor = resize(image_fluor, (i_h, i_w),
+        #                anti_aliasing=True)
+        # #image_fluor = image_fluor.resize((i_h, i_w))
+        # image_fluor = np.reshape(image_fluor,(i_h, i_w, i_c)) 
+        # image_fluor = np.float64(image_fluor)
+        # image_fluor = image_fluor * 31.0 / image_fluor.max()
+        # image_fluor = np.uint8(image_fluor)
+        # #image_bright_field = single_img/256.
+        # y[index] = image_fluor
         
     return X, y
 
@@ -200,7 +215,7 @@ def DecoderMiniBlock(prev_layer_input, skip_layer_input, n_filters=32):
 
 
 
-def UNetCompiled(input_size=(540, 540, 1), n_filters=32, n_classes=16):
+def UNetCompiled(input_size=(512, 512, 1), n_filters=32, n_classes=2):
    """
    Combine both encoder and decoder blocks according to the U-Net research paper
    Return the model as output 
@@ -275,11 +290,11 @@ X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2, rando
 
 
 # Call the helper function for defining the layers for the model, given the input image size
-unet = UNetCompiled(input_size=(512,512,1), n_filters=32, n_classes=16)
+unet = UNetCompiled(input_size=(512,512,1), n_filters=32, n_classes=2)
 
 unet.compile(optimizer=tf.keras.optimizers.Adam(), loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
               metrics=['accuracy'])
-results = unet.fit(X_train, y_train, batch_size=4, epochs=1, validation_data=(X_valid, y_valid))
+results = unet.fit(X_train, y_train, batch_size=4, epochs=4, validation_data=(X_valid, y_valid))
 unet.evaluate(X_valid, y_valid)
 
 # Results of Validation Dataset
